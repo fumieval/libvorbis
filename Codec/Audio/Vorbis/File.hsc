@@ -21,6 +21,9 @@ module Codec.Audio.Vorbis.File (
         getSystemEndianness,
         WordSize(..),
         Signedness(..),
+        -- * Seeking
+        pcmSeekLap,
+        timeSeekLap,
         -- * Close file
         close
     ) where
@@ -72,6 +75,13 @@ foreign import ccall safe "info_OggVorbis_File" info_OggVorbis_File
 
 foreign import ccall safe "ov_read" ov_read
     :: Ptr File_struct -> Ptr CChar -> CInt -> CInt -> CInt -> CInt -> Ptr CInt -> IO CLong
+
+foreign import ccall safe "ov_pcm_seek_lap" ov_pcm_seek_lap
+    :: Ptr File_struct -> Int64 -> IO CInt
+
+foreign import ccall safe "ov_time_seek_lap" ov_time_seek_lap
+    :: Ptr File_struct -> CDouble -> IO CInt
+
 
 data File_struct
 data File = File (Ptr File_struct) (FunPtr ReadFunc) (FunPtr CloseFunc) (FunPtr SeekFunc) (FunPtr TellFunc)
@@ -237,7 +247,7 @@ read :: File
      -> Endianness   -- ^ How to encode the samples as bytes
      -> WordSize     -- ^ Desired word size
      -> Signedness   -- ^ Whether you want signed or unsigned values
-     -> IO (Maybe (ByteString, Int)) 
+     -> IO (Maybe (ByteString, Int))
 read (File f _ _ _ _) bytes endianness wordsize signedness =
     allocaBytes bytes $ \buf ->
     alloca $ \p_bitstream -> go buf p_bitstream
@@ -264,3 +274,20 @@ read (File f _ _ _ _) bytes endianness wordsize signedness =
         Unsigned     -> 0
         Signed       -> 1
 
+-- | Seeks to the given position, specified in pcm samples.
+-- This crosslaps the transision to avoid clicking.
+pcmSeekLap :: File -> Int64 -> IO ()
+pcmSeekLap (File f _ _ _ _) t = do
+    ret <- ov_pcm_seek_lap f t
+    case ret of
+        0 -> return ()
+        n -> throwVorbisError (fromIntegral n)
+
+-- | Seeks to the specified position (in seconds).
+-- This crosslaps the transision to avoid clicking.
+timeSeekLap :: File -> Double -> IO ()
+timeSeekLap (File f _ _ _ _) t = do
+    ret <- ov_time_seek_lap f (CDouble t)
+    case ret of
+        0 -> return ()
+        n -> throwVorbisError (fromIntegral n)
